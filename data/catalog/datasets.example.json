@@ -1,0 +1,23 @@
+{
+  "sample_single_csv": {
+    "path": "data/raw/sample_bars_single.csv",
+    "format": "csv",
+    "timeframe": "1d",
+    "timezone": "Asia/Shanghai",
+    "column_mapping": {}
+  },
+  "sample_multi_csv": {
+    "path": "data/raw/sample_bars_multi.csv",
+    "format": "csv",
+    "timeframe": "1d",
+    "timezone": "Asia/Shanghai",
+    "column_mapping": {}
+  },
+  "sample_multi_parquet": {
+    "path": "data/raw/sample_bars_multi.parquet",
+    "format": "parquet",
+    "timeframe": "1d",
+    "timezone": "Asia/Shanghai",
+    "column_mapping": {}
+  }
+}
