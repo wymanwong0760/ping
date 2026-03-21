@@ -16,6 +16,12 @@ python3 -m pip install -e ".[ashare]"
 
 > Note: the `ashare` extra installs `akshare` as the default online A-share data backend in this project. If you already have `Ashare/ashare` in your environment, the provider will try it first and then fall back to `akshare`.
 
+### Install Visualization (optional)
+
+```bash
+python3 -m pip install -e ".[viz]"
+```
+
 ### Run examples
 
 ```bash
@@ -28,6 +34,7 @@ python3 examples/run_backtest_demo.py
 python3 examples/run_backtest_ashare_demo.py
 python3 examples/run_execution_demo.py
 ```
+
 
 ### Run tests
 

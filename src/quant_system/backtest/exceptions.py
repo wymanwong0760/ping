@@ -1,4 +1,4 @@
-"""异常类型定义。"""
+"""回测模块异常类型定义。"""
 from __future__ import annotations
 
 

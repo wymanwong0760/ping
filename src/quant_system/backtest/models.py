@@ -1,4 +1,4 @@
-"""数据模型定义。"""
+"""回测结果数据模型定义。"""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -17,7 +17,10 @@ if TYPE_CHECKING:
 
 @dataclass(slots=True)
 class BacktestResult:
-    """结果容器。"""
+    """回测输出容器。
+
+    同时保存过程数据（orders/fills/snapshots）与统计结果（metrics/equity_curve）。
+    """
 
     config: BacktestConfig
     snapshots: list[PortfolioSnapshot] = field(default_factory=list)
@@ -32,7 +35,7 @@ class BacktestResult:
     export_paths: dict[str, Path] = field(default_factory=dict)
 
     def summary(self) -> dict[str, Any]:
-        """执行 `summary`。"""
+        """返回回测摘要视图，便于展示与导出。"""
         last_equity = float(self.equity_curve.iloc[-1]) if not self.equity_curve.empty else 0.0
         return {
             "initial_cash": self.config.initial_cash,

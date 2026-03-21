@@ -80,7 +80,9 @@ def test_run_backtest_with_provider_e2e_with_risk() -> None:
     assert all(item.action in {"approve", "modify", "reject"} for item in result.risk_decisions)
 
 
-def test_export_result_writes_csv_and_json(tmp_path: Path) -> None:
+def test_export_result_writes_csv_json_and_plots(tmp_path: Path) -> None:
+    pytest.importorskip("matplotlib")
+
     result = run_backtest_with_provider(
         provider=_build_provider(),
         strategy=_build_strategy(),
@@ -99,15 +101,17 @@ def test_export_result_writes_csv_and_json(tmp_path: Path) -> None:
     exported = export_result(
         result=result,
         output_dir=tmp_path,
-        prefix="e2e",
-        formats=("csv", "json"),
+        prefix="e2e_plot",
+        formats=("csv", "json", "plot_png"),
     )
 
-    assert set(exported.keys()) == {"csv", "json"}
-    assert exported["csv"].exists()
-    assert exported["json"].exists()
-    assert result.export_paths["csv"] == exported["csv"]
-    assert result.export_paths["json"] == exported["json"]
+    expected_keys = {"csv", "json", "plot_equity_png", "plot_drawdown_png"}
+    assert expected_keys.issubset(exported.keys())
+
+    for key in expected_keys:
+        assert exported[key].exists()
+        assert exported[key].stat().st_size > 0
+        assert result.export_paths[key] == exported[key]
 
     equity_df = pd.read_csv(exported["csv"])
     assert {"timestamp", "equity", "drawdown"}.issubset(equity_df.columns)

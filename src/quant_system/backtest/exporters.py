@@ -1,4 +1,10 @@
-"""结果导出实现。"""
+"""回测结果导出实现。
+
+支持把回测结果导出为：
+- CSV：权益与回撤时间序列；
+- JSON：摘要、指标与成交明细；
+- Plot(PNG)：权益与回撤图。
+"""
 from __future__ import annotations
 
 import json
@@ -9,8 +15,9 @@ from typing import Literal, Sequence
 import pandas as pd
 
 from .models import BacktestResult
+from .visualizers import export_plots
 
-ExportFormat = Literal["csv", "json"]
+ExportFormat = Literal["csv", "json", "plot_png"]
 
 
 def export_result(
@@ -19,12 +26,16 @@ def export_result(
     prefix: str = "backtest_result",
     formats: Sequence[ExportFormat] = ("csv",),
 ) -> dict[str, Path]:
-    """导出结果。"""
+    """导出回测结果并返回各格式输出路径。"""
     target_dir = Path(output_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
 
     exported: dict[str, Path] = {}
     for fmt in formats:
+        if fmt == "plot_png":
+            exported.update(export_plots(result=result, output_dir=target_dir, prefix=prefix, formats=("png",)))
+            continue
+
         if fmt == "csv":
             path = target_dir / f"{prefix}.equity.csv"
             equity_df = pd.DataFrame(

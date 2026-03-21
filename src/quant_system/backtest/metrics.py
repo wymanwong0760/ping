@@ -1,4 +1,10 @@
-"""绩效指标计算实现。"""
+"""绩效指标计算实现。
+
+本模块聚焦“快照序列 -> 可分析时间序列/指标”：
+- 从账户快照构建权益曲线；
+- 从权益曲线构建回撤序列；
+- 计算收益、波动、夏普、胜率、换手等聚合指标。
+"""
 from __future__ import annotations
 
 import math
@@ -7,7 +13,7 @@ import pandas as pd
 
 
 def build_equity_curve(snapshots: list) -> pd.Series:
-    """构建权益曲线并返回结果。"""
+    """将快照列表转换为按时间索引的权益曲线。"""
     if not snapshots:
         return pd.Series(dtype="float64")
     index = pd.to_datetime([snapshot.timestamp for snapshot in snapshots], utc=True)
@@ -16,7 +22,7 @@ def build_equity_curve(snapshots: list) -> pd.Series:
 
 
 def build_drawdown_series(equity_curve: pd.Series) -> pd.Series:
-    """构建回撤序列并返回结果。"""
+    """基于权益曲线计算逐时点回撤 `(equity / running_peak - 1)`。"""
     if equity_curve.empty:
         return pd.Series(dtype="float64")
     running_peak = equity_curve.cummax()
@@ -31,7 +37,18 @@ def compute_metrics(
     annualization_factor: int,
     total_fills: int = 0,
 ) -> dict[str, float]:
-    """计算绩效指标并返回结果。"""
+    """计算回测核心指标。
+
+    指标口径：
+    - `cumulative_return`：期末权益相对期初权益收益率；
+    - `annualized_return`：按 `annualization_factor` 年化；
+    - `annualized_volatility`：收益序列标准差年化；
+    - `sharpe_ratio`：年化收益 / 年化波动（无无风险利率项）；
+    - `max_drawdown`：回撤序列最小值；
+    - `win_rate`：已平仓盈亏中盈利笔数占比；
+    - `turnover`：总换手名义金额 / 期初权益；
+    - `total_trades`：成交笔数（fills）。
+    """
     if equity_curve.empty:
         return {
             "cumulative_return": 0.0,
@@ -76,7 +93,7 @@ def compute_metrics(
 
 
 def to_monthly_returns(equity_curve: pd.Series) -> pd.Series:
-    """转换为月收益率序列并返回结果。"""
+    """将权益曲线重采样到月末并输出月收益率序列。"""
     if equity_curve.empty:
         return pd.Series(dtype="float64")
     monthly_equity = equity_curve.resample("ME").last()

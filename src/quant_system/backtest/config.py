@@ -1,4 +1,4 @@
-"""配置对象定义。"""
+"""回测配置对象定义。"""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -11,7 +11,13 @@ FillMode = Literal["next_open", "current_close"]
 
 @dataclass(slots=True)
 class BacktestConfig:
-    """回测配置数据类。"""
+    """回测配置。
+
+    关键字段：
+    - `fill_mode`：决定订单在下一根 bar 还是当前 bar 成交；
+    - `signal_position_size`：信号策略默认目标仓位基数；
+    - `annualization_factor`：收益与波动年化因子。
+    """
 
     initial_cash: float = 1_000_000.0
     fill_mode: FillMode = "next_open"

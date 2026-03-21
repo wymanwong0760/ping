@@ -20,6 +20,9 @@ dev = [
 ashare = [
   "akshare>=1.16",
 ]
+viz = [
+  "matplotlib>=3.8",
+]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
