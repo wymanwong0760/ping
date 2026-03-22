@@ -55,7 +55,7 @@ result = StrategyRunner(strategy).run(bars)
 result = run_strategy_with_provider(
     provider=provider,
     strategy=strategy,
-    symbols=[...],
+    symbols=["000001.SZ", "000002.SZ", "000003.SZ"],
     start="2024-01-01",
     end="2024-03-01",
     dataset_name="sample_multi_csv",
@@ -90,7 +90,7 @@ result = run_strategy_with_provider(
   - 前 K 名等权，其他标的目标权重为 0
 - 详细文档：`docs/strategies/cross_sectional_momentum/README.md`
 
-## 6. examples
+## 6. 示例
 
 ```bash
 python3 examples/run_dual_moving_average.py
@@ -98,7 +98,7 @@ python3 examples/run_cross_sectional_momentum.py
 python3 examples/show_strategy_outputs.py
 ```
 
-## 7. tests
+## 7. 测试
 
 ```bash
 pytest -q
@@ -111,3 +111,69 @@ pytest -q
 - 动量排名输出
 - daily/weekly rebalance 行为
 - no-lookahead
+
+## 8. 架构图（Mermaid）
+
+### 8.1 组件图
+
+```mermaid
+flowchart TD
+    U[调用方/研究脚本] --> API[run_strategy / run_strategy_with_provider]
+    API --> R[StrategyRunner]
+    API --> D[BaseDataProvider]
+
+    D --> BARS[标准化 bars DataFrame]
+    BARS --> R
+
+    subgraph S[Strategy Layer]
+      BS[BaseStrategy]
+      SS[SignalStrategy]
+      TS[TargetStrategy]
+      DMA[DualMovingAverageStrategy]
+      CSM[CrossSectionalMomentumStrategy]
+    end
+
+    R --> BS
+    BS --> SS
+    BS --> TS
+    SS --> DMA
+    TS --> CSM
+
+    R --> Ctx[StrategyContext\n(timestamp,bars,universe,state)]
+    R --> OUT[StrategyRunResult\nsignals / targets]
+
+    OUT --> Down[下游(backtest/order_sizer)]
+```
+
+### 8.2 时序图
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Caller as 调用方
+    participant API as strategy.api
+    participant Provider as DataProvider(可选)
+    participant Runner as StrategyRunner
+    participant Strategy as 具体策略
+    participant Result as StrategyRunResult
+
+    alt run_strategy_with_provider
+        Caller->>API: run_strategy_with_provider(...)
+        API->>Provider: load_bars(...)
+        Provider-->>API: bars
+    else run_strategy
+        Caller->>API: run_strategy(strategy, bars)
+    end
+
+    API->>Runner: run(bars, universe, state)
+    Runner->>Runner: prepare_bars + 选rebalance时点
+    loop each timestamp t
+        Runner->>Runner: 构造 StrategyContext(仅历史<=t)
+        Runner->>Strategy: generate_signals / generate_targets
+        Strategy-->>Runner: outputs
+        Runner->>Runner: 校验 symbol/timestamp/no-lookahead
+    end
+    Runner-->>API: StrategyRunResult
+    API-->>Caller: signals/targets
+```
+

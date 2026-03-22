@@ -6,7 +6,7 @@
 
 - strategy：产出交易意图（信号/目标仓位）
 - backtest：负责订单生成、撮合、资金与持仓演化、绩效计算与导出
-- risk / execution：当前预留，不在本模块内硬编码
+- risk / execution：不在 backtest 内硬编码规则与执行实现；通过可选接口接入
 
 ## 2. 核心组件
 
@@ -52,8 +52,10 @@ python3 examples/run_backtest_demo.py
 ## 6. 测试
 
 ```bash
-pytest -q
+pytest tests/backtest -q
 ```
+
+（如需全量回归可使用 `pytest -q`）
 
 覆盖点包括：
 
@@ -62,3 +64,86 @@ pytest -q
 - `next_open` 时序
 - 最大回撤与指标可计算
 - API 端到端与导出能力
+
+## 7. 架构图（Mermaid）
+
+### 7.1 组件图
+
+```mermaid
+flowchart TD
+    U[调用方] --> API[run_backtest / run_backtest_with_provider]
+    API --> E[BacktestEngine]
+
+    E --> OS[OrderSizer]
+    E --> RISK[RiskEngine 可选]
+    E --> BRK[SimBroker]
+    E --> LED[Ledger]
+    E --> MET[metrics\nbuild_equity_curve/compute_metrics]
+
+    subgraph Inputs[输入]
+      SIG[signals]
+      TGT[targets]
+      BARS[bars]
+    end
+
+    SIG --> E
+    TGT --> E
+    BARS --> E
+
+    E --> ORD[orders]
+    ORD --> RISK
+    RISK --> FORD[filtered orders]
+    FORD --> BRK
+    BRK --> FILLS[fills]
+    FILLS --> LED
+    LED --> SNAP[portfolio snapshots]
+    SNAP --> MET
+    MET --> RES[BacktestResult]
+    RES --> U
+```
+
+### 7.2 时序图
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Caller as 调用方
+    participant Engine as BacktestEngine
+    participant Risk as RiskEngine(可选)
+    participant Broker as SimBroker
+    participant Ledger as Ledger
+    participant Metrics as Metrics
+
+    Caller->>Engine: run(bars, signals/targets)
+    Engine->>Engine: prepare_bars + group by timestamp
+
+    loop each timestamp t
+        alt fill_mode = next_open
+            Engine->>Broker: 执行历史pending
+            Broker-->>Engine: fills + remaining
+            Engine->>Ledger: apply_fill(...)
+            Engine->>Ledger: mark_to_market(t)
+            Engine->>Engine: 由signals/targets生成新orders
+            opt 风控启用
+                Engine->>Risk: evaluate_orders(...)
+                Risk-->>Engine: accepted + decisions + audits
+            end
+            Engine->>Engine: 新orders挂到 next timestamp
+        else fill_mode = current_close
+            Engine->>Engine: 生成当期orders
+            opt 风控启用
+                Engine->>Risk: evaluate_orders(...)
+                Risk-->>Engine: accepted + decisions + audits
+            end
+            Engine->>Broker: 当期尝试撮合
+            Broker-->>Engine: fills + remaining
+            Engine->>Ledger: apply_fill(...)
+            Engine->>Ledger: mark_to_market(t)
+        end
+    end
+
+    Engine->>Metrics: 计算权益曲线/回撤/绩效
+    Metrics-->>Engine: metrics
+    Engine-->>Caller: BacktestResult
+```
+

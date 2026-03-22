@@ -42,6 +42,16 @@ python3 examples/run_execution_demo.py
 pytest -q
 ```
 
+### Run module tests
+
+```bash
+pytest tests/data -q
+pytest tests/strategy -q
+pytest tests/backtest -q
+pytest tests/risk -q
+pytest tests/execution -q
+```
+
 ### Notes
 
 - If backtest outputs `total_trades: 0`, first check `fill_mode` and sample length.
@@ -58,3 +68,5 @@ See docs for:
 - `docs/backtest_module.md`：bar-level 回测引擎、撮合/账本/绩效、导出与高层 API
 - `docs/risk_module.md`：风控规则引擎、审计记录、回测链路中的风险决策
 - `docs/execution_module.md`：paper trading 执行引擎、订单生命周期、撮合时序
+
+术语说明：规则层通常使用 `pass/modify/reject`，风控引擎对外决策使用 `approve/modify/reject`。

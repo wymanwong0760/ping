@@ -5,7 +5,7 @@
 ## 1. 数据目录规范
 
 - `data/raw/`：原始历史数据文件（CSV/Parquet）
-- `data/processed/`：预处理后数据（当前预留）
+- `data/processed/`：预处理后数据（当前版本不作为加载入口，回测导出文件也不依赖该目录）
 - `data/catalog/`：数据集注册配置（样例：`datasets.example.json`）
 
 ## 2. 标准字段（内部 long-format）
@@ -21,6 +21,7 @@
 说明：
 - `timestamp` 统一转换为 UTC 时区时间。
 - 数据输出按 `timestamp, symbol` 升序，避免未来函数。
+- `amount`、`adj_factor`、`is_suspended` 为可选列，缺失时不影响基础加载；下游按默认语义处理。
 
 ## 3. 关键接口
 

@@ -39,7 +39,8 @@
 ### `fill_mode="current_close"`
 
 - 订单可在当前 bar 以 close 价格撮合（market 单）；
-- limit 单仍需满足触发条件（buy: `low <= limit`，sell: `high >= limit`）。
+- limit 单仍需满足触发条件（buy: `low <= limit`，sell: `high >= limit`）；
+- 上述撮合前提均受可交易性检查约束（如停牌/不可交易会进入 reject 或 keep_pending 分支）。
 
 ## 4. 不可交易标的处理
 
@@ -68,7 +69,8 @@
 from quant_system.execution import ExecutionConfig, create_execution_engine, run_execution_step
 
 engine = create_execution_engine(ExecutionConfig(fill_mode="next_open"))
-result = run_execution_step(engine, timestamp, bars_by_symbol, orders=optional_orders)
+orders_or_none = None  # 或传入 OrderRequest 列表
+result = run_execution_step(engine, timestamp, bars_by_symbol, orders=orders_or_none)
 ```
 
 ## 7. 示例
@@ -90,3 +92,70 @@ pytest tests/execution -q
 - 成本模型（commission/slippage）
 - 不可交易标的拒绝或挂单策略
 - 撤单与 open order 管理
+
+## 9. 架构图（Mermaid）
+
+### 9.1 组件图
+
+```mermaid
+flowchart TD
+    Up[Risk通过订单] --> EX[ExecutionEngine]
+    CFG[ExecutionConfig\nfill_mode/costs/untradable_policy] --> EX
+    BAR[bars_by_symbol] --> EX
+
+    EX --> Q[(open_orders pending queue)]
+    Q --> MATCH[resolve_fill_price + check_tradable]
+    MATCH --> COST[compute_costs]
+    COST --> FILLS[Fill[]]
+    MATCH --> REJ[ExecutionReject[]]
+    Q --> PEND[pending_orders snapshot]
+
+    FILLS --> Down1[ledger/backtest]
+    REJ --> Down2[audit/log]
+```
+
+### 9.2 时序图
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Up as 上游(backtest/live loop)
+    participant Engine as ExecutionEngine
+    participant Queue as open_orders
+    participant Bar as bars_by_symbol
+    participant Out as ExecutionStepResult
+
+    Up->>Engine: submit_orders(timestamp, orders)
+    Engine->>Queue: append pending orders
+
+    loop each bar t
+        Up->>Engine: on_bar(t, bars_by_symbol)
+        Engine->>Queue: 遍历 pending
+
+        alt next_open 且同bar提交
+            Engine->>Queue: 保持 pending
+        else 到达 executable_at
+            Engine->>Bar: 获取symbol bar
+            alt 无bar
+                Engine->>Queue: 保持 pending
+            else 有bar
+                Engine->>Engine: check_tradable
+                alt 不可交易 + keep_pending
+                    Engine->>Queue: 保持 pending
+                else 不可交易 + reject
+                    Engine->>Engine: 生成 ExecutionReject
+                else 可交易
+                    Engine->>Engine: resolve_fill_price
+                    alt 未触发(如limit未到价)
+                        Engine->>Queue: 保持 pending
+                    else 可成交
+                        Engine->>Engine: compute_costs
+                        Engine->>Engine: 生成 Fill 并标记 filled
+                    end
+                end
+            end
+        end
+        Engine-->>Up: ExecutionStepResult(fills,rejects,pending_orders)
+    end
+```
+

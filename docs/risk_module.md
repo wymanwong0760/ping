@@ -39,6 +39,8 @@
 - `modify` 后继续进入后续规则
 - 全部通过为 `approve`
 
+补充说明：`rule_order` 的顺序即规则优先级，前置规则产生的 `modify` 会直接影响后续规则的输入。
+
 ## 4. 回测中启用风控
 
 高层 API 可直接传 `risk_config`：
@@ -120,3 +122,73 @@ python3 examples/run_backtest_with_risk_demo.py
 - 回测 summary
 - 每笔风控决策
 - 每条审计记录
+
+## 8. 架构图（Mermaid）
+
+### 8.1 组件图
+
+```mermaid
+flowchart TD
+    Up[order_sizer / backtest] --> RE[RiskEngine]
+    CFG[RiskConfig\nrule_order + rule params] --> RE
+    CTX[RiskContext\nsnapshot, prices, market, daily_turnover] --> RE
+
+    subgraph Rules[Rule Chain]
+      R1[UniverseFilterRule]
+      R2[TradabilityRule]
+      R3[DrawdownCircuitBreakerRule]
+      R4[MaxSymbolPositionRule]
+      R5[MaxLeverageRule]
+      R6[DailyTurnoverRule]
+    end
+
+    RE --> R1 --> R2 --> R3 --> R4 --> R5 --> R6
+
+    RE --> DEC[RiskDecision\napprove/modify/reject]
+    RE --> AUD[RiskAuditRecord]
+    RE --> ACC[accepted orders]
+    ACC --> Down[execution/broker]
+```
+
+### 8.2 时序图
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Caller as Backtest/上游
+    participant Engine as RiskEngine
+    participant Rule as Rule_i
+    participant Out as accepted+decisions+audits
+
+    Caller->>Engine: evaluate_orders(requests, context)
+
+    loop each order
+        Engine->>Engine: current = original order
+        loop rule_order
+            Engine->>Rule: evaluate_order(current, rule_context)
+            Rule-->>Engine: RuleResult(pass/modify/reject)
+
+            alt pass
+                Engine->>Engine: continue
+            else modify
+                Engine->>Engine: current = modified_order
+                Engine->>Engine: 记录 modify audit
+                Engine->>Engine: continue next rule
+            else reject
+                Engine->>Engine: 记录 reject audit
+                Engine->>Engine: 短路终止本单
+                break
+            end
+        end
+
+        alt reject
+            Engine->>Engine: 产出 decision=reject
+        else approve/modify
+            Engine->>Engine: 产出 final_request
+            Engine->>Engine: 累计当日turnover
+        end
+    end
+
+    Engine-->>Caller: accepted, decisions, audits
+```
+

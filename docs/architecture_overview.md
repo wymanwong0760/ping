@@ -68,6 +68,8 @@ flowchart LR
 
 ## 2. 模块职责
 
+术语对齐：规则层使用 `pass/modify/reject`；风险引擎对外决策使用 `approve/modify/reject`。
+
 ### 2.1 core
 - 统一定义跨模块领域对象：`Bar / Signal / TargetPosition / OrderRequest / Fill / PortfolioSnapshot`
 - 统一 bars schema 常量与默认语义（如 timeframe/timezone）
@@ -145,7 +147,7 @@ flowchart LR
 - `src/quant_system/execution/models.py`
 - `src/quant_system/execution/api.py`
 
-## 3. 端到端主链路
+## 3. 端到端主链路（backtest 链路）
 
 ```text
 data provider.load_bars
