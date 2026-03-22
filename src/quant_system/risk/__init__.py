@@ -1,4 +1,8 @@
-"""risk 模块导出。"""
+"""risk 模块公共导出。
+
+对外按“基类/配置/模型/引擎/规则/异常”分组导出，
+便于调用方通过单一入口完成导入。
+"""
 
 from .base import BaseRiskRule
 from .config import (

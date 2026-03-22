@@ -1,4 +1,9 @@
-"""风控引擎实现。"""
+"""风控引擎实现。
+
+该模块负责把多条风控规则按 `RiskConfig.rule_order` 串联执行，
+并将规则层 `pass/modify/reject` 聚合为引擎层 `approve/modify/reject`。
+同时维护可审计轨迹（`RiskAuditRecord`）与日内换手累计。
+"""
 from __future__ import annotations
 
 import logging
@@ -25,7 +30,16 @@ logger = logging.getLogger(__name__)
 
 
 class RiskEngine:
-    """风控引擎。"""
+    """风控引擎。
+
+    决策语义：
+    - 任一规则返回 `reject`：立即终止后续规则并输出 `reject`；
+    - 任一规则返回 `modify`：应用修改后继续评估后续规则；
+    - 全部规则仅 `pass`：输出 `approve`。
+
+    设计上将“规则动作”和“最终决策”分层，便于调用方区分：
+    规则层是局部判断，引擎层是全链路聚合结果。
+    """
 
     def __init__(self, config: RiskConfig | None = None) -> None:
         self.config = config or RiskConfig()
@@ -37,7 +51,17 @@ class RiskEngine:
         requests: Sequence[OrderRequest],
         context: RiskContext,
     ) -> tuple[list[OrderRequest], list[RiskDecision], list[RiskAuditRecord]]:
-        """逐笔评估订单请求。"""
+        """逐笔评估订单请求并返回通过单、决策与审计记录。
+
+        返回值关系：
+        - accepted: 最终可进入执行层的订单（approve/modify 且带 final_request）；
+        - decisions: 每笔原始请求对应一条最终决策；
+        - audits: 命中 `modify/reject` 的规则轨迹（可多条）。
+
+        注意：
+        仅当订单最终被接受时，才会按最终请求估算并累计当日换手，
+        以确保 `daily_turnover` 规则看到的是“已通过风控”的真实消耗。
+        """
         accepted: list[OrderRequest] = []
         decisions: list[RiskDecision] = []
         audits: list[RiskAuditRecord] = []
@@ -51,6 +75,7 @@ class RiskEngine:
                 price = self._resolve_price(decision.final_request.symbol, context)
                 if price > 0:
                     trading_day = context.timestamp.date()
+                    # 仅累计最终通过风控的订单名义额，避免把 reject 请求误计入预算消耗。
                     self._turnover_by_date[trading_day] = (
                         self._turnover_by_date.get(trading_day, 0.0)
                         + float(decision.final_request.quantity) * float(price)
@@ -63,7 +88,13 @@ class RiskEngine:
         requests: Sequence[TargetPosition],
         context: RiskContext,
     ) -> tuple[list[TargetPosition], list[RiskDecision], list[RiskAuditRecord]]:
-        """逐笔评估目标仓位请求。"""
+        """逐笔评估目标仓位请求。
+
+        与 `evaluate_orders` 保持一致的聚合语义：
+        - `reject` 立即短路；
+        - `modify` 记录审计并继续后续规则；
+        - 最终输出 accepted / decisions / audits 三元组。
+        """
         accepted: list[TargetPosition] = []
         decisions: list[RiskDecision] = []
         audits: list[RiskAuditRecord] = []
@@ -102,6 +133,7 @@ class RiskEngine:
                             metadata=result.metadata,
                         )
                     )
+                    # 与订单风控保持一致：reject 后短路，后续规则不再评估。
                     break
 
                 if result.action == "modify" and result.modified_target is not None:
@@ -119,6 +151,7 @@ class RiskEngine:
                             metadata=result.metadata,
                         )
                     )
+                    # modify 不终止链路，后续规则基于“修改后请求”继续评估。
 
             if rejected:
                 decisions.append(
@@ -159,6 +192,13 @@ class RiskEngine:
         request: OrderRequest,
         context: RiskContext,
     ) -> tuple[RiskDecision, list[RiskAuditRecord]]:
+        """评估单笔订单并产出最终决策与规则级审计。
+
+        关键口径：
+        `rule_context.daily_turnover` = `context.daily_turnover`（外部已发生）
+        + `self._turnover_by_date[trading_day]`（本引擎当日已接受并累计）。
+        这样可确保同一批次订单按顺序评估时，后续订单能看到前序订单对预算的占用。
+        """
         current: OrderRequest = request
         audits: list[RiskAuditRecord] = []
         triggered = False
@@ -174,6 +214,7 @@ class RiskEngine:
                 snapshot=context.snapshot,
                 close_prices=context.close_prices,
                 market_by_symbol=context.market_by_symbol,
+                # 规则侧看到的是“基础换手 + 当日已通过风控的累计换手”。
                 daily_turnover=base_turnover + self._turnover_by_date.get(trading_day, 0.0),
                 metadata=dict(context.metadata),
             )
@@ -204,6 +245,7 @@ class RiskEngine:
                     rule.name,
                     final_reason,
                 )
+                # reject 为硬短路：当前订单立即结束评估，直接输出最终 reject 决策。
                 return (
                     RiskDecision(
                         timestamp=context.timestamp,
@@ -238,6 +280,7 @@ class RiskEngine:
                     rule.name,
                     final_reason,
                 )
+                # modify 为软约束：回写修改结果后，继续让后续规则做二次约束。
 
         decision_action = "modify" if triggered and current != request else "approve"
         return (
@@ -255,6 +298,11 @@ class RiskEngine:
 
     @staticmethod
     def _build_rules(config: RiskConfig) -> list[BaseRiskRule]:
+        """按 `rule_order` 构建规则实例列表。
+
+        注册表提供“规则名 -> 实例”的稳定映射，最终执行顺序完全由
+        `RiskConfig.rule_order` 决定，使优先级策略可配置且可测试。
+        """
         registry: dict[str, BaseRiskRule] = {
             "universe_filter": UniverseFilterRule(config.universe_filter),
             "tradability": TradabilityRule(config.tradability),
@@ -288,6 +336,13 @@ class RiskEngine:
         updated: dict | None,
         metadata: dict,
     ) -> RiskAuditRecord:
+        """构建统一审计记录。
+
+        字段语义：
+        - original: 规则命中前输入；
+        - updated: 仅 modify 时存在，表示规则调整后的输出；
+        - reject 时 updated 为空，表示链路终止且无可执行请求。
+        """
         return RiskAuditRecord(
             timestamp=timestamp,
             symbol=symbol,
@@ -301,6 +356,14 @@ class RiskEngine:
 
     @staticmethod
     def _resolve_price(symbol: str, context: RiskContext) -> float:
+        """解析风控估算价格。
+
+        回退优先级：
+        1) `context.close_prices[symbol]`
+        2) `context.market_by_symbol[symbol]["close"]`
+        3) `context.market_by_symbol[symbol]["open"]`
+        4) `0.0`（表示缺价，交由上层规则决定 reject/跳过）
+        """
         if symbol in context.close_prices:
             return float(context.close_prices[symbol])
         payload = context.market_by_symbol.get(symbol, {})

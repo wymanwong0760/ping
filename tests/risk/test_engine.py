@@ -1,4 +1,7 @@
-"""test_engine 测试用例。"""
+"""RiskEngine 行为测试。
+
+覆盖点：规则链聚合、reject 短路、modify 结果落地与审计记录输出。
+"""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -32,6 +35,7 @@ def _order(symbol: str, qty: float) -> OrderRequest:
 
 
 def test_risk_engine_multi_rules_are_predictable() -> None:
+    # 覆盖多规则联动：同一批次里同时出现 modify（仓位裁剪）与 reject（黑名单）。
     config = RiskConfig()
     config.universe_filter.blacklist.add("000002.SZ")
     config.max_symbol_position.max_abs_qty = 80.0
@@ -68,6 +72,7 @@ def test_risk_engine_multi_rules_are_predictable() -> None:
 
 
 def test_risk_engine_drawdown_circuit_breaker_rejects_all() -> None:
+    # 覆盖回撤熔断短路：订单应全部 reject，并产生对应审计记录。
     config = RiskConfig()
     config.drawdown_circuit_breaker.max_drawdown = 0.05
     engine = RiskEngine(config)
