@@ -1,4 +1,5 @@
 """data 模块导出。"""
+from .ashare_downloader import AshareDownloader, DownloadResult, download_ashare_bars
 from .ashare_provider import AshareDataProvider
 from .base import BaseDataProvider
 from .calendar import TradingCalendar
@@ -11,6 +12,9 @@ __all__ = [
     "BaseDataProvider",
     "LocalFileDataProvider",
     "AshareDataProvider",
+    "AshareDownloader",
+    "DownloadResult",
+    "download_ashare_bars",
     "DataCatalog",
     "DatasetMetadata",
     "TradingCalendar",

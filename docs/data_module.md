@@ -78,3 +78,30 @@ bars = provider.load_bars(
 ```
 
 返回值始终为标准 long-format DataFrame，可直接输入策略层或回测层。
+
+## 6. A 股下载落盘（akshare 优先）
+
+当你希望把在线数据先落盘、再稳定复用于回测时，可直接使用下载 API：
+
+```python
+from quant_system.data import download_ashare_bars
+
+result = download_ashare_bars(
+    symbols=["000001.SZ", "600000.SH"],
+    start="2024-01-01",
+    end="2024-03-01",
+    output_path="data/raw/ashare_000001_600000.parquet",
+    fields=[
+        "timestamp", "symbol", "open", "high", "low", "close", "volume", "amount"
+    ],
+    output_format="parquet",
+    overwrite=True,
+)
+print(result)
+```
+
+说明：
+- 当前下载入口默认使用 `akshare`；
+- `fields` 必须是标准列子集，且必须包含必需列：`timestamp,symbol,open,high,low,close,volume`；
+- 默认输出 `parquet`（也支持 `csv`）；
+- 建议下载后通过 `LocalFileDataProvider + DataCatalog` 读取，作为回测输入。

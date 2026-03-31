@@ -16,13 +16,21 @@ from typing import Any, Callable, Mapping, Sequence
 
 import pandas as pd
 
-from quant_system.core.schema import (
-    BAR_OPTIONAL_COLUMNS,
-    BAR_REQUIRED_COLUMNS,
-    BAR_STANDARD_COLUMNS,
-    DEFAULT_TIMEFRAME,
-)
+from quant_system.core.schema import BAR_STANDARD_COLUMNS, DEFAULT_TIMEFRAME
 
+from .ashare_common import (
+    apply_symbol_time_filters,
+    estimate_count,
+    fetch_with_akshare,
+    normalize_suspend_flag as normalize_suspend_flag_common,
+    normalize_symbol as normalize_symbol_common,
+    normalize_symbol_frame,
+    normalize_symbol_list as normalize_symbol_list_common,
+    to_akshare_period as to_akshare_period_common,
+    to_ashare_symbol as to_ashare_symbol_common,
+    to_filter_utc_timestamp as to_filter_utc_timestamp_common,
+    to_local_timestamp as to_local_timestamp_common,
+)
 from .base import BaseDataProvider
 from .calendar import TradingCalendar
 from .exceptions import DataConfigError, DataLoadError, DataValidationError
@@ -269,156 +277,21 @@ class AshareDataProvider(BaseDataProvider):
             else:
                 ashare_error = DataLoadError("Cannot find get_price API from Ashare package")
 
-        try:
-            akshare = importlib.import_module("akshare")
-        except ModuleNotFoundError as exc:
-            raise DataLoadError(
-                "No available online provider module. Tried Ashare/ashare and akshare. "
-                f"Ashare error: {ashare_error}; akshare import error: {exc}"
-            ) from exc
-
-        period = self._to_akshare_period(timeframe)
-        normalized = self._normalize_symbol(symbol)
-        code, _suffix = normalized.split(".", 1)
-        start_date = start.strftime("%Y%m%d") if start is not None else None
-        end_date = end.strftime("%Y%m%d") if end is not None else None
-
-        akshare_symbol = self._to_ashare_symbol(symbol)
-        frame: pd.DataFrame | None = None
-        primary_error: Exception | None = None
-
-        try:
-            frame = akshare.stock_zh_a_hist(
-                symbol=code,
-                period=period,
-                start_date=start_date,
-                end_date=end_date,
-                adjust="",
-            )
-        except Exception as exc:
-            primary_error = exc
-
-        if (frame is None or pd.DataFrame(frame).empty) and period == "daily":
-            try:
-                daily = akshare.stock_zh_a_daily(symbol=akshare_symbol, adjust="")
-                frame = pd.DataFrame(daily)
-                if not frame.empty and "date" in frame.columns:
-                    date_series = pd.to_datetime(frame["date"], errors="coerce")
-                    frame = frame.assign(date=date_series)
-                    if start_date is not None:
-                        frame = frame[frame["date"] >= pd.to_datetime(start_date)]
-                    if end_date is not None:
-                        frame = frame[frame["date"] <= pd.to_datetime(end_date)]
-                    frame = frame.assign(date=frame["date"].dt.strftime("%Y-%m-%d"))
-            except Exception as exc:
-                if primary_error is None:
-                    primary_error = exc
-
-        if frame is None:
-            raise DataLoadError(f"akshare fetch failed for '{symbol}': {primary_error}")
-
-        return pd.DataFrame(frame)
+        return fetch_with_akshare(
+            symbol=symbol,
+            timeframe=timeframe,
+            start=start,
+            end=end,
+        )
 
 
     def _normalize_symbol_frame(self, raw: pd.DataFrame, symbol: str) -> pd.DataFrame:
-        """标准化单标的原始行情为统一 bars 结构。
-
-        处理内容：
-        - 兼容中英文与不同供应商字段名（如 date/日期、close/收盘）；
-        - 构造并校验 timestamp 列；
-        - 将时间统一转为 UTC；
-        - 统一 symbol 表达；
-        - 把价格/成交量等列转为数值；
-        - 归一化停牌标识并补齐可选列；
-        - 检查必须列后按标准列顺序输出。
-
-        该方法是在线源“脏数据 -> 干净 bars”转换的核心入口。
-        """
-        df = raw.copy()
-        rename_map = {
-            "date": "timestamp",
-            "datetime": "timestamp",
-            "time": "timestamp",
-            "trade_date": "timestamp",
-            "日期": "timestamp",
-            "Open": "open",
-            "open_price": "open",
-            "开盘": "open",
-            "High": "high",
-            "high_price": "high",
-            "最高": "high",
-            "Low": "low",
-            "low_price": "low",
-            "最低": "low",
-            "Close": "close",
-            "close_price": "close",
-            "收盘": "close",
-            "Volume": "volume",
-            "vol": "volume",
-            "成交量": "volume",
-            "Amount": "amount",
-            "money": "amount",
-            "成交额": "amount",
-            "adj": "adj_factor",
-            "adjfactor": "adj_factor",
-            "复权因子": "adj_factor",
-            "suspended": "is_suspended",
-            "suspend": "is_suspended",
-            "停牌": "is_suspended",
-        }
-        df = df.rename(columns=rename_map)
-
-        if "timestamp" not in df.columns:
-            reset = df.reset_index()
-            df = reset.rename(columns={reset.columns[0]: "timestamp"})
-
-        if "timestamp" not in df.columns:
-            raise DataLoadError(f"Ashare bars missing timestamp for '{symbol}'")
-
-        timestamps = pd.to_datetime(df["timestamp"], errors="coerce", utc=False)
-        if timestamps.isna().all():
-            raise DataLoadError(f"Ashare bars contain invalid timestamps for '{symbol}'")
-        if getattr(timestamps.dt, "tz", None) is None:
-            df["timestamp"] = timestamps.dt.tz_localize(self.timezone).dt.tz_convert("UTC")
-        else:
-            df["timestamp"] = timestamps.dt.tz_convert("UTC")
-
-        df["symbol"] = self._normalize_symbol(symbol)
-
-        for col in ["open", "high", "low", "close", "volume", "amount", "adj_factor"]:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
-
-        if "is_suspended" in df.columns:
-            df["is_suspended"] = self._normalize_suspend_flag(df["is_suspended"])
-
-        for optional_col in BAR_OPTIONAL_COLUMNS:
-            if optional_col not in df.columns:
-                df[optional_col] = pd.NA
-
-        missing_required = [col for col in BAR_REQUIRED_COLUMNS if col not in df.columns]
-        if missing_required:
-            raise DataLoadError(
-                f"Ashare bars missing required columns for '{symbol}': {missing_required}"
-            )
-
-        normalized = df[BAR_STANDARD_COLUMNS].copy()
-        normalized["symbol"] = normalized["symbol"].astype("string")
-        normalized = normalized.dropna(subset=["timestamp"]).sort_values(
-            ["timestamp", "symbol"]
-        )
-        return normalized.reset_index(drop=True)
+        """标准化单标的原始行情为统一 bars 结构。"""
+        return normalize_symbol_frame(raw, symbol=symbol, timezone=self.timezone)
 
     @staticmethod
     def _normalize_suspend_flag(series: pd.Series) -> pd.Series:
-        true_values = {"1", "true", "yes", "y", "停牌", "t"}
-        false_values = {"0", "false", "no", "n", "正常", "f"}
-
-        normalized = series.astype("string").str.lower().str.strip()
-        out = pd.Series(pd.NA, index=series.index, dtype="boolean")
-        out[normalized.isin(true_values)] = True
-        out[normalized.isin(false_values)] = False
-        return out
+        return normalize_suspend_flag_common(series)
 
     def _apply_filters(
         self,
@@ -427,81 +300,29 @@ class AshareDataProvider(BaseDataProvider):
         start: pd.Timestamp | str | None,
         end: pd.Timestamp | str | None,
     ) -> pd.DataFrame:
-        result = df[df["symbol"].isin(symbols)]
-
-        start_ts = (
-            self._to_filter_utc_timestamp(start, is_end=False)
-            if start is not None
-            else None
+        return apply_symbol_time_filters(
+            df,
+            symbols=symbols,
+            start=start,
+            end=end,
+            timezone=self.timezone,
         )
-        end_ts = self._to_filter_utc_timestamp(end, is_end=True) if end is not None else None
-
-        if start_ts is not None:
-            result = result[result["timestamp"] >= start_ts]
-        if end_ts is not None:
-            result = result[result["timestamp"] <= end_ts]
-
-        return result.sort_values(["timestamp", "symbol"]).reset_index(drop=True)
 
     @staticmethod
     def _normalize_symbol_list(symbols: Sequence[str] | str) -> list[str]:
-        raw = [symbols] if isinstance(symbols, str) else list(symbols)
-        normalized = [AshareDataProvider._normalize_symbol(item) for item in raw]
-        deduplicated = sorted(set(normalized))
-        if not deduplicated:
-            raise DataLoadError("No valid symbols provided")
-        return deduplicated
+        return normalize_symbol_list_common(symbols)
 
     @staticmethod
     def _normalize_symbol(symbol: str) -> str:
-        text = str(symbol).strip().upper()
-        if "." in text:
-            code, suffix = text.split(".", 1)
-            if suffix in {"SH", "SZ"}:
-                return f"{code}.{suffix}"
-
-        lowered = text.lower()
-        if lowered.startswith("sh") and len(lowered) >= 8:
-            return f"{lowered[2:8].upper()}.SH"
-        if lowered.startswith("sz") and len(lowered) >= 8:
-            return f"{lowered[2:8].upper()}.SZ"
-
-        digits = "".join(ch for ch in text if ch.isdigit())
-        if len(digits) != 6:
-            raise DataLoadError(f"Unsupported symbol format: '{symbol}'")
-        suffix = "SH" if digits.startswith(("5", "6", "9")) else "SZ"
-        return f"{digits}.{suffix}"
+        return normalize_symbol_common(symbol)
 
     @staticmethod
     def _to_ashare_symbol(symbol: str) -> str:
-        normalized = AshareDataProvider._normalize_symbol(symbol)
-        code, suffix = normalized.split(".", 1)
-        exchange = "sh" if suffix == "SH" else "sz"
-        return f"{exchange}{code}"
+        return to_ashare_symbol_common(symbol)
 
     @staticmethod
     def _to_akshare_period(timeframe: str) -> str:
-        mapping = {
-            "1d": "daily",
-            "d": "daily",
-            "day": "daily",
-            "daily": "daily",
-            "1w": "weekly",
-            "w": "weekly",
-            "week": "weekly",
-            "weekly": "weekly",
-            "1m": "monthly",
-            "m": "monthly",
-            "month": "monthly",
-            "monthly": "monthly",
-        }
-        key = str(timeframe).strip().lower()
-        period = mapping.get(key)
-        if period is None:
-            raise DataLoadError(
-                f"Unsupported timeframe '{timeframe}' for akshare; use daily/weekly/monthly."
-            )
-        return period
+        return to_akshare_period_common(timeframe)
 
     @staticmethod
     def _to_utc_timestamp(value: pd.Timestamp | str) -> pd.Timestamp:
@@ -511,28 +332,11 @@ class AshareDataProvider(BaseDataProvider):
         return ts.tz_convert("UTC")
 
     def _to_filter_utc_timestamp(self, value: pd.Timestamp | str, is_end: bool) -> pd.Timestamp:
-        ts = pd.Timestamp(value)
-        if isinstance(value, str):
-            text = value.strip()
-            if len(text) == 10 and text[4] == "-" and text[7] == "-" and is_end:
-                ts = ts + pd.Timedelta(days=1) - pd.Timedelta(nanoseconds=1)
-        if ts.tzinfo is None:
-            return ts.tz_localize(self.timezone).tz_convert("UTC")
-        return ts.tz_convert("UTC")
+        return to_filter_utc_timestamp_common(value, is_end=is_end, timezone=self.timezone)
 
     def _to_local_timestamp(self, value: pd.Timestamp | str) -> pd.Timestamp:
-        ts = pd.Timestamp(value)
-        if ts.tzinfo is None:
-            return ts.tz_localize(self.timezone)
-        return ts.tz_convert(self.timezone)
+        return to_local_timestamp_common(value, timezone=self.timezone)
 
     @staticmethod
     def _estimate_count(start: pd.Timestamp | None, end: pd.Timestamp | None) -> int:
-        if start is not None and end is not None:
-            days = (end.normalize() - start.normalize()).days + 1
-            return max(days + 5, 30)
-        if start is not None:
-            now = pd.Timestamp.now(tz=start.tz)
-            days = (now.normalize() - start.normalize()).days + 1
-            return max(days + 5, 30)
-        return 500
+        return estimate_count(start, end)

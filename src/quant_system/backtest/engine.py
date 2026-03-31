@@ -339,7 +339,9 @@ class BacktestEngine:
 
         if "is_suspended" in prepared.columns:
             # 缺失停牌标记默认视为可交易，避免 None 破坏后续布尔判断。
-            prepared["is_suspended"] = prepared["is_suspended"].fillna(False).astype(bool)
+            prepared["is_suspended"] = (
+                prepared["is_suspended"].astype("boolean").fillna(False).astype(bool)
+            )
 
         return prepared.sort_values(["timestamp", "symbol"]).reset_index(drop=True)
 
